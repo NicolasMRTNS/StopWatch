@@ -27,30 +27,38 @@ pub const StopWatch = struct {
         return self.elapsed_ns / 1_000_000;
     }
 
-    pub fn prettyPrint(self: *StopWatch, writer: anytype) !void {
-        if (!self.running) {
-            const elapsed_ns = self.elapsed_ns;
-            const elapsed_ms = @divTrunc(elapsed_ns, 1_000_000);
-            const elapsed_us = @divTrunc(elapsed_ns, 1_000);
-            const elapsed_s = @divTrunc(elapsed_ns, 1_000_000_000);
+    pub fn prettyString(self: *const StopWatch, allocator: std.mem.Allocator) ![]const u8 {
+        const elapsed_ns = if (self.running)
+            self.elapsed_ns + (@as(i64, @truncate(std.time.nanoTimestamp())) - self.start_time)
+        else
+            self.elapsed_ns;
 
-            if (elapsed_ns >= 1_000_000_000) {
-                try std.fmt.format(writer, "{d}.{03d} s\n", .{
-                    elapsed_s,
-                    (elapsed_ns % 1_000_000_000) / 1_000_000,
-                });
-            } else if (elapsed_ns >= 1_000_000) {
-                try std.fmt.format(writer, "{d}.{03d} ms\n", .{
-                    elapsed_ms,
-                    (elapsed_ns % 1_000_000) / 1_000,
-                });
-            } else {
-                try std.fmt.format(writer, "{d}.{03d} µs\n", .{
-                    elapsed_us,
-                    elapsed_ns % 1_000,
-                });
-            }
+        const elapsed_ms = @divTrunc(elapsed_ns, 1_000_000);
+        const elapsed_us = @divTrunc(elapsed_ns, 1_000);
+        const elapsed_s = @divTrunc(elapsed_ns, 1_000_000_000);
+
+        var buf = try std.ArrayList(u8).initCapacity(allocator, 32);
+        defer buf.deinit();
+        const writer = buf.writer();
+
+        if (elapsed_ns >= 1_000_000_000) {
+            try std.fmt.format(writer, "{d}.{03d} s", .{
+                elapsed_s,
+                (@divTrunc(@rem(elapsed_ns, 1_000_000_000), 1_000_000)),
+            });
+        } else if (elapsed_ns >= 1_000_000) {
+            try std.fmt.format(writer, "{d}.{03d} ms", .{
+                elapsed_ms,
+                (@divTrunc(@rem(elapsed_ns, 1_000_000), 1_000)),
+            });
+        } else {
+            try std.fmt.format(writer, "{d}.{03d} µs", .{
+                elapsed_us,
+                (@rem(elapsed_ns, 1_000)),
+            });
         }
+
+        return buf.toOwnedSlice();
     }
 };
 
@@ -64,19 +72,18 @@ test "can_start_and_stop_stopwatch" {
     try std.testing.expectEqual(false, stopWatch.running);
 }
 
-test "prettyPrint outputs human readable time" {
-    var sw = StopWatch{
+test "pretty string elapsed time" {
+    const stopWatch = @This().StopWatch;
+
+    var gpa = std.testing.allocator;
+    var sw = stopWatch{
         .start_time = 0,
-        .elapsed_ns = 1_234_567,
+        .elapsed_ns = 1_234_567, // 1.234 ms
         .running = false,
     };
 
-    var buf = std.ArrayList(u8).init(std.testing.allocator);
-    defer buf.deinit();
+    const str = try sw.prettyString(gpa);
+    defer gpa.free(str);
 
-    const writer = buf.writer();
-    try sw.prettyPrint(writer);
-
-    const output = buf.items;
-    try std.testing.expect(std.mem.indexOf(u8, output, "µs") != null);
+    try std.testing.expectEqualStrings("1.234 ms", str);
 }
